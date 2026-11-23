@@ -11,6 +11,7 @@ Gõ Telex hoặc VNI, dùng giống Unikey: biểu tượng **V/E** trên khay h
   (`vieejt` hay `vieetj` đều ra `việt`).
 - **Tự khôi phục từ sai**: gõ tiếng Anh không bị biến thành chữ có dấu (`text`, `window`, `google`).
 - Gõ lặp để bỏ dấu giống Unikey: `ss` → `s`, `aaa` → `aa`, `pussh` → `push`, `classs` → `class`.
+- Quy tắc `w` giống Unikey: `thuowr` → `thuở`, `duowngf` → `dường`, `uwoi` → `ươi`, `quw` → `quw`.
 - Phím chuyển: **Ctrl+Shift**, **Alt+Z** hoặc **Ctrl+Space**.
 - Trên Linux: **không cần fcitx5 hay ibus**. HFastKey tự nói chuyện với GNOME (giao thức IBus).
 
@@ -53,11 +54,26 @@ sao) và chuyển sang HFastKey ngay. Gỡ: `./uninstall.sh` (tự quay lại fc
 Mở **Bảng điều khiển** bằng cách tìm *HFastKey* trong danh sách ứng dụng, hoặc chuột phải vào
 biểu tượng V/E → *Bảng điều khiển...*
 
+## Kiểm thử
+
+Ngoài test riêng, HFastKey được đối chiếu với **~183.000 ca** lấy từ GitHub (`scripts/conformance.sh`):
+
+| Nguồn | Số ca | Kết quả |
+|---|---|---|
+| Bảng test Telex của [fcitx5-unikey](https://github.com/fcitx/fcitx5-unikey) | 1.307 | **100%** giống Unikey |
+| 7.184 âm tiết tiếng Việt ([vietnameselanguage/syllable](https://github.com/vietnameselanguage/syllable)), gõ Telex/VNI theo nhiều thứ tự, chữ hoa | 57.574 | 99,9% (7 âm tiết sai chính tả trong dữ liệu như `qúa`, `gía`) |
+| ~69.000 từ/cụm từ ([duyet/vietnamese-wordlist](https://github.com/duyet/vietnamese-wordlist)), Telex + VNI | 138.918 | **100%** |
+| Test của [bamboo-core](https://github.com/BambooEngine/bamboo-core) | 41 | 33 giống; 8 khác do quy ước riêng của bamboo |
+
+Dữ liệu nguồn chỉ được tải về khi chạy test, không nằm trong repo. Các ca khác biệt đã biết và lý do
+nằm trong `tests/conformance/known_differences.tsv`.
+
 ## Build từ mã nguồn
 
 ```sh
 cargo test --release --workspace         # test logic (lõi, Linux, Windows)
 scripts/test-ibus.sh                     # test Linux với thư viện IBus thật, trên bus D-Bus riêng
+scripts/conformance.sh                   # đối chiếu ~183.000 ca với Unikey, bamboo-core, danh sách từ
 scripts/install.sh                       # Linux: build và cài cho người dùng hiện tại
 cargo build --release -p hfastkey-win    # Windows: build hfastkey.exe
 ```

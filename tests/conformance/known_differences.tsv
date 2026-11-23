@@ -1,0 +1,51 @@
+# Các ca khác biệt đã biết (nguồn<TAB>phím<TAB>lý do). scripts/conformance.sh không coi là lỗi.
+bamboo	SDD	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+bamboo	catr	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+bamboo	aloo	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+bamboo	oddp	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+bamboo	tooi oo HIEEUR	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+bamboo	duwongwj	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+bamboo	choas	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+bamboo	chuyểnz	quy ước riêng của bamboo-core / chuỗi không phải tiếng Việt
+syllable-telex-after	qusa	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-after	qura	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-after	gisa	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-after	qusi	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-after	qufa	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-after	gifa	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-after	gira	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-capital	Quas	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-capital	Quar	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-capital	Gias	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-capital	Quis	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-capital	Quaf	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-capital	Giaf	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-capital	Giar	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-end	quas	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-end	quar	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-end	gias	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-end	quis	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-end	quaf	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-end	giaf	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-telex-end	giar	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-after	qu1a	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-after	qu3a	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-after	gi1a	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-after	qu1i	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-after	qu2a	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-after	gi2a	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-after	gi3a	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-capital	Qua1	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-capital	Qua3	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-capital	Gia1	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-capital	Qui1	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-capital	Qua2	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-capital	Gia2	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-capital	Gia3	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-end	qua1	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-end	qua3	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-end	gia1	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-end	qui1	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-end	qua2	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-end	gia2	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả
+syllable-vni-end	gia3	dữ liệu nguồn viết sai chính tả (qúa, gía...); HFastKey ra đúng chính tả

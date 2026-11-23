@@ -141,7 +141,13 @@ const NUCLEI: &[&str] = &[
     "uoi", "uou", "uya", "uye", "uyu", "yeu",
 ];
 
-const FINALS: &[&str] = &["", "c", "ch", "m", "n", "ng", "nh", "p", "t"];
+// "k" cho địa danh như Đắk Lắk.
+const FINALS: &[&str] = &["", "c", "ch", "k", "m", "n", "ng", "nh", "p", "t"];
+
+/// Các vần có dấu mũ hợp lệ (để không biến "khoeo" thành "khôe").
+const HAT_NUCLEI: &[&str] = &[
+    "â", "âu", "ây", "ê", "êu", "iê", "iêu", "ô", "ôi", "uâ", "uây", "uê", "uô", "uôi", "yê", "yêu", "uyê",
+];
 
 #[derive(Clone, Debug)]
 struct Word {
@@ -150,6 +156,9 @@ struct Word {
     /// Phím vừa gõ chỉ để bỏ dấu (gõ lặp: "ss", "aaa", "ww"), giống Unikey:
     /// phím này không được tính khi khôi phục từ sai ("puss" -> "pus").
     undone: bool,
+    /// Phím vừa dùng để bỏ dấu: gõ tiếp đúng phím đó thì giữ nguyên chữ
+    /// ("www" -> "ww", "asss" -> "ass"), giống Unikey.
+    escaped: Option<char>,
 }
 
 impl Word {
@@ -158,6 +167,7 @@ impl Word {
             letters: Vec::new(),
             tone: Tone::None,
             undone: false,
+            escaped: None,
         }
     }
 
@@ -194,7 +204,54 @@ impl Word {
     }
 
     fn apply(&mut self, k: char, method: Method) {
-        match action(method, k) {
+        let lk = k.to_ascii_lowercase();
+        let act = action(method, k);
+        if self.escaped == Some(lk) && !matches!(act, Action::Letter) {
+            self.push(k);
+            return;
+        }
+        self.escaped = None;
+        self.apply_action(act, k);
+        if self.undone {
+            self.escaped = Some(lk);
+        }
+        self.fix_uo();
+    }
+
+    /// "uơ"/"ưo" đứng trước chữ khác thì phải là "ươ": duowng -> dương,
+    /// uwoi -> ươi, huwou -> hươu. ("thuở", "huơ" không có chữ phía sau nên giữ nguyên.)
+    fn fix_uo(&mut self) {
+        let Some((s, e)) = self.vowel_range() else { return };
+        for i in s..e.saturating_sub(1) {
+            let (u, o) = (self.letters[i], self.letters[i + 1]);
+            // Chỉ khi theo sau là i/u hoặc âm cuối (c, m, n, p, t...), không phải phím thừa như "uơf".
+            let next_ok = self
+                .letters
+                .get(i + 2)
+                .is_some_and(|n| matches!(n.base, 'i' | 'u' | 'c' | 'm' | 'n' | 'p' | 't'));
+            if u.base != 'u' || o.base != 'o' || !next_ok {
+                continue;
+            }
+            match (u.mark, o.mark) {
+                (Mark::None, Mark::Horn) => self.letters[i].mark = Mark::Horn,
+                (Mark::Horn, Mark::None) => self.letters[i + 1].mark = Mark::Horn,
+                _ => {}
+            }
+        }
+    }
+
+    /// Vần (có dấu mũ/móc, chưa có thanh) nếu đặt `mark` cho chữ thứ `idx`.
+    fn nucleus_with(&self, s: usize, e: usize, idx: usize, mark: Mark) -> String {
+        (s..e)
+            .map(|i| {
+                let l = self.letters[i];
+                compose(l.base, if i == idx { mark } else { l.mark }, Tone::None)
+            })
+            .collect()
+    }
+
+    fn apply_action(&mut self, act: Action, k: char) {
+        match act {
             Action::Letter => self.push(k),
             Action::Tone(t) => {
                 if self.vowel_range().is_none() {
@@ -229,8 +286,10 @@ impl Word {
                             self.letters[i].mark = Mark::None;
                             self.push(k);
                             self.undone = true;
-                        } else {
+                        } else if HAT_NUCLEI.contains(&self.nucleus_with(s, e, i, Mark::Hat).as_str()) {
                             self.letters[i].mark = Mark::Hat;
+                        } else {
+                            self.push(k);
                         }
                         return;
                     }
@@ -246,12 +305,19 @@ impl Word {
                     return;
                 }
                 if !self.horn(k, true) {
-                    self.letters.push(Letter {
-                        base: 'u',
-                        upper: k.is_uppercase(),
-                        mark: Mark::Horn,
-                        from_w: true,
-                    });
+                    // w đứng riêng thành ư, trừ khi đã có nguyên âm hoặc đứng sau q ("qw").
+                    let standalone = self.vowel_range().is_none()
+                        && !self.letters.last().is_some_and(|l| l.base == 'q');
+                    if standalone {
+                        self.letters.push(Letter {
+                            base: 'u',
+                            upper: k.is_uppercase(),
+                            mark: Mark::Horn,
+                            from_w: true,
+                        });
+                    } else {
+                        self.push(k);
+                    }
                 }
             }
             Action::Horn => {
@@ -297,21 +363,25 @@ impl Word {
         };
         for i in s..e.saturating_sub(1) {
             if self.letters[i].base == 'u' && self.letters[i + 1].base == 'o' {
-                if self.letters[i].mark == Mark::Horn && self.letters[i + 1].mark == Mark::Horn {
-                    self.letters[i].mark = Mark::None;
-                    self.letters[i + 1].mark = Mark::None;
-                    self.push(k);
-                    self.undone = true;
-                } else {
-                    self.letters[i].mark = Mark::Horn;
-                    self.letters[i + 1].mark = Mark::Horn;
+                // Giống Unikey: uow -> uơ, uoww -> ươ, uowww -> uow.
+                match (self.letters[i].mark, self.letters[i + 1].mark) {
+                    (Mark::Horn, Mark::Horn) => {
+                        self.letters[i].mark = Mark::None;
+                        self.letters[i + 1].mark = Mark::None;
+                        self.push(k);
+                        self.undone = true;
+                    }
+                    (_, Mark::Horn) => self.letters[i].mark = Mark::Horn,
+                    _ => self.letters[i + 1].mark = Mark::Horn,
                 }
                 return true;
             }
         }
         let found = (s..e).rev().find(|&i| {
             let b = self.letters[i].base;
-            b == 'u' || b == 'o' || (allow_breve && b == 'a')
+            // "qu": u là phụ âm, không nhận móc ("quw" giữ nguyên).
+            let after_q = b == 'u' && i > 0 && self.letters[i - 1].base == 'q';
+            (b == 'u' && !after_q) || b == 'o' || (allow_breve && b == 'a')
         });
         match found {
             Some(i) => {
@@ -599,7 +669,22 @@ mod tests {
             ("Vieejt", "Việt"),
             ("VIEEJT", "VIỆT"),
             ("DDaau", "Đâu"),
-            ("thuowr", "thưở"),
+            ("thuowr", "thuở"),
+            ("huow", "huơ"),
+            ("thuoww", "thươ"),
+            ("duowngf", "dường"),
+            ("nguoiwf", "người"),
+            ("uwoi", "ươi"),
+            ("huwou", "hươu"),
+            ("quoww", "quow"),
+            ("qw", "qw"),
+            ("quw", "quw"),
+            ("www", "ww"),
+            ("asss", "ass"),
+            ("khoeo", "khoeo"),
+            ("ngoeof", "ngoèo"),
+            ("ddawks", "đắk"),
+            ("Lawks", "Lắk"),
             ("khoer", "khỏe"),
             ("xoong", "xông"),
             ("xooong", "xoong"),

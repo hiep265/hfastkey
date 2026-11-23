@@ -28,6 +28,8 @@ jobs:
         run: cargo test --release --workspace
       - name: Test với thư viện IBus thật
         run: scripts/test-ibus.sh
+      - name: Test đối chiếu (~183.000 ca từ Unikey, bamboo-core, danh sách âm tiết/từ)
+        run: scripts/conformance.sh
       - name: Build
         run: cargo build --release -p hfastkey-daemon -p hfastkey-settings
       - name: Đóng gói
