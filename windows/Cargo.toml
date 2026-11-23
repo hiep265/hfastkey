@@ -1,0 +1,25 @@
+[package]
+name = "hfastkey-win"
+version = "0.1.0"
+edition = "2021"
+description = "HFastKey cho Windows: bộ gõ tiếng Việt (Telex/VNI) viết bằng Rust"
+license = "MIT"
+
+[[bin]]
+name = "hfastkey"
+path = "src/main.rs"
+
+[dependencies]
+hfastkey = { path = ".." }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Registry",
+    "Win32_System_Threading",
+] }

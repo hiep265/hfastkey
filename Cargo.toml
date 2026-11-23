@@ -1,0 +1,20 @@
+[package]
+name = "hfastkey"
+version = "0.1.0"
+edition = "2021"
+description = "Bộ gõ tiếng Việt (Telex/VNI) viết bằng Rust, chạy như addon của fcitx5"
+license = "MIT"
+
+[lib]
+name = "hfastkey_core"
+crate-type = ["staticlib", "rlib"]
+
+[profile.release]
+opt-level = 3
+lto = true
+panic = "abort"
+codegen-units = 1
+strip = true
+
+[workspace]
+members = [".", "daemon", "settings", "windows"]

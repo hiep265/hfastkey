@@ -1,0 +1,87 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cài thư viện hệ thống
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-4-dev python3-gi gir1.2-ibus-1.0 dbus
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test logic (lõi, Linux daemon, logic Windows)
+        run: cargo test --release --workspace
+      - name: Test với thư viện IBus thật
+        run: scripts/test-ibus.sh
+      - name: Build
+        run: cargo build --release -p hfastkey-daemon -p hfastkey-settings
+      - name: Đóng gói
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then export VERSION="${GITHUB_REF_NAME#v}"; fi
+          scripts/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: dist/*.tar.gz
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test logic
+        run: cargo test --release -p hfastkey -p hfastkey-win
+      - name: Build
+        run: cargo build --release -p hfastkey-win
+      - name: Bộ cài (Inno Setup) và bản zip
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version = "(.*)"' | Select-Object -First 1).Matches.Groups[1].Value
+          if ($env:GITHUB_REF_TYPE -eq "tag") { $version = $env:GITHUB_REF_NAME.TrimStart("v") }
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) { choco install innosetup --no-progress -y }
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" installer\windows\hfastkey.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force -Path dist\hfastkey | Out-Null
+          Copy-Item target\release\hfastkey.exe, README.md, LICENSE dist\hfastkey\
+          Compress-Archive -Path dist\hfastkey\* -DestinationPath "dist\hfastkey-$version-windows-x64-portable.zip"
+          Get-ChildItem dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: |
+            dist/*.exe
+            dist/*.zip
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Tạo bản phát hành
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "HFastKey $GITHUB_REF_NAME" \
+            --notes-file .github/release-notes.md
