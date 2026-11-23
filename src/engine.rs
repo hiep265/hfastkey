@@ -8,12 +8,6 @@
 //!   được ("vieetj" hay "vieejt" đều ra "việt").
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Method {
-    Telex,
-    Vni,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Mark {
     None,
     Hat,    // â ê ô
@@ -88,44 +82,25 @@ enum Action {
     Letter,
     Tone(Tone),
     ClearTone,
-    /// Dấu mũ. Telex: chỉ đúng nguyên âm trùng phím (aa, ee, oo).
-    /// VNI (phím 6): nguyên âm a/e/o gần cuối nhất.
-    Hat(Option<char>),
-    /// Telex w: ư/ơ/ă, "uo" -> "ươ", w đứng riêng -> ư.
+    /// Dấu mũ: chỉ đúng nguyên âm trùng phím (aa, ee, oo).
+    Hat(char),
+    /// w: ư/ơ/ă, "uo" -> "ươ", w đứng riêng -> ư.
     TelexW,
-    Horn,  // VNI 7
-    Breve, // VNI 8
     Stroke,
 }
 
-fn action(method: Method, k: char) -> Action {
-    let l = k.to_ascii_lowercase();
-    match method {
-        Method::Telex => match l {
-            's' => Action::Tone(Tone::Acute),
-            'f' => Action::Tone(Tone::Grave),
-            'r' => Action::Tone(Tone::Hook),
-            'x' => Action::Tone(Tone::Tilde),
-            'j' => Action::Tone(Tone::Dot),
-            'z' => Action::ClearTone,
-            'a' | 'e' | 'o' => Action::Hat(Some(l)),
-            'w' => Action::TelexW,
-            'd' => Action::Stroke,
-            _ => Action::Letter,
-        },
-        Method::Vni => match k {
-            '1' => Action::Tone(Tone::Acute),
-            '2' => Action::Tone(Tone::Grave),
-            '3' => Action::Tone(Tone::Hook),
-            '4' => Action::Tone(Tone::Tilde),
-            '5' => Action::Tone(Tone::Dot),
-            '0' => Action::ClearTone,
-            '6' => Action::Hat(None),
-            '7' => Action::Horn,
-            '8' => Action::Breve,
-            '9' => Action::Stroke,
-            _ => Action::Letter,
-        },
+fn action(k: char) -> Action {
+    match k.to_ascii_lowercase() {
+        's' => Action::Tone(Tone::Acute),
+        'f' => Action::Tone(Tone::Grave),
+        'r' => Action::Tone(Tone::Hook),
+        'x' => Action::Tone(Tone::Tilde),
+        'j' => Action::Tone(Tone::Dot),
+        'z' => Action::ClearTone,
+        l @ ('a' | 'e' | 'o') => Action::Hat(l),
+        'w' => Action::TelexW,
+        'd' => Action::Stroke,
+        _ => Action::Letter,
     }
 }
 
@@ -147,6 +122,11 @@ const FINALS: &[&str] = &["", "c", "ch", "k", "m", "n", "ng", "nh", "p", "t"];
 /// Các vần có dấu mũ hợp lệ (để không biến "khoeo" thành "khôe").
 const HAT_NUCLEI: &[&str] = &[
     "â", "âu", "ây", "ê", "êu", "iê", "iêu", "ô", "ôi", "uâ", "uây", "uê", "uô", "uôi", "yê", "yêu", "uyê",
+];
+
+/// Các vần có dấu móc/trăng hợp lệ.
+const HORN_NUCLEI: &[&str] = &[
+    "ă", "ơ", "ư", "oă", "ơi", "ưa", "ưi", "ưu", "uơ", "ươ", "ươi", "ươu",
 ];
 
 #[derive(Clone, Debug)]
@@ -171,10 +151,10 @@ impl Word {
         }
     }
 
-    fn replay(keys: &[char], method: Method) -> Self {
+    fn replay(keys: &[char]) -> Self {
         let mut w = Word::new();
         for &k in keys {
-            w.apply(k, method);
+            w.apply(k);
         }
         w
     }
@@ -203,9 +183,9 @@ impl Word {
         Some((s, e))
     }
 
-    fn apply(&mut self, k: char, method: Method) {
+    fn apply(&mut self, k: char) {
         let lk = k.to_ascii_lowercase();
-        let act = action(method, k);
+        let act = action(k);
         if self.escaped == Some(lk) && !matches!(act, Action::Letter) {
             self.push(k);
             return;
@@ -274,13 +254,7 @@ impl Word {
             }
             Action::Hat(target) => {
                 if let Some((s, e)) = self.vowel_range() {
-                    let found = (s..e).rev().find(|&i| {
-                        let b = self.letters[i].base;
-                        match target {
-                            Some(t) => b == t,
-                            None => matches!(b, 'a' | 'e' | 'o'),
-                        }
-                    });
+                    let found = (s..e).rev().find(|&i| self.letters[i].base == target);
                     if let Some(i) = found {
                         if self.letters[i].mark == Mark::Hat {
                             self.letters[i].mark = Mark::None;
@@ -304,7 +278,7 @@ impl Word {
                     self.undone = true;
                     return;
                 }
-                if !self.horn(k, true) {
+                if !self.horn(k) {
                     // w đứng riêng thành ư, trừ khi đã có nguyên âm hoặc đứng sau q ("qw").
                     let standalone = self.vowel_range().is_none()
                         && !self.letters.last().is_some_and(|l| l.base == 'q');
@@ -319,20 +293,6 @@ impl Word {
                         self.push(k);
                     }
                 }
-            }
-            Action::Horn => {
-                if !self.horn(k, false) {
-                    self.push(k);
-                }
-            }
-            Action::Breve => {
-                if let Some((s, e)) = self.vowel_range() {
-                    if let Some(i) = (s..e).rev().find(|&i| self.letters[i].base == 'a') {
-                        self.toggle(i, Mark::Breve, k);
-                        return;
-                    }
-                }
-                self.push(k);
             }
             Action::Stroke => {
                 if self.letters.first().is_some_and(|l| l.base == 'd') {
@@ -355,9 +315,9 @@ impl Word {
         }
     }
 
-    /// Dấu móc cho u/o (và trăng cho a nếu `allow_breve`). Trả về false nếu
-    /// không có nguyên âm nào nhận dấu.
-    fn horn(&mut self, k: char, allow_breve: bool) -> bool {
+    /// Dấu móc cho u/o, dấu trăng cho a. Trả về false nếu không có nguyên âm
+    /// nào nhận dấu.
+    fn horn(&mut self, k: char) -> bool {
         let Some((s, e)) = self.vowel_range() else {
             return false;
         };
@@ -377,20 +337,31 @@ impl Word {
                 return true;
             }
         }
-        let found = (s..e).rev().find(|&i| {
-            let b = self.letters[i].base;
-            // "qu": u là phụ âm, không nhận móc ("quw" giữ nguyên).
-            let after_q = b == 'u' && i > 0 && self.letters[i - 1].base == 'q';
-            (b == 'u' && !after_q) || b == 'o' || (allow_breve && b == 'a')
-        });
-        match found {
+        let mark_of = |b: char| if b == 'a' { Mark::Breve } else { Mark::Horn };
+        // Các chữ có thể nhận dấu, từ cuối lên.
+        let cands: Vec<usize> = (s..e)
+            .rev()
+            .filter(|&i| {
+                let b = self.letters[i].base;
+                // "qu": u là phụ âm, không nhận móc ("quw" giữ nguyên).
+                let after_q = b == 'u' && i > 0 && self.letters[i - 1].base == 'q';
+                (b == 'u' && !after_q) || b == 'o' || b == 'a'
+            })
+            .collect();
+        // Ưu tiên chữ cho vần hợp lệ ("uuw" -> "ưu", "muaw" -> "mưa"); nếu không
+        // có thì gỡ dấu đang có ("ưuw" -> "uuw"); cuối cùng là chữ gần cuối nhất.
+        let pick = cands
+            .iter()
+            .copied()
+            .find(|&i| {
+                let m = mark_of(self.letters[i].base);
+                self.letters[i].mark != m && HORN_NUCLEI.contains(&self.nucleus_with(s, e, i, m).as_str())
+            })
+            .or_else(|| cands.iter().copied().find(|&i| self.letters[i].mark == mark_of(self.letters[i].base)))
+            .or(cands.first().copied());
+        match pick {
             Some(i) => {
-                let mark = if self.letters[i].base == 'a' {
-                    Mark::Breve
-                } else {
-                    Mark::Horn
-                };
-                self.toggle(i, mark, k);
+                self.toggle(i, mark_of(self.letters[i].base), k);
                 true
             }
             None => false,
@@ -467,71 +438,61 @@ impl Word {
     }
 
     /// Chuyển từ hiện tại thành chuỗi phím chuẩn (dùng sau khi xoá lùi).
-    fn encode(&self, method: Method) -> Vec<char> {
+    fn encode(&self) -> Vec<char> {
         let mut out = Vec::new();
         for l in &self.letters {
-            let c = if l.upper { l.base.to_ascii_uppercase() } else { l.base };
-            out.push(c);
-            let key = match (method, l.mark) {
-                (_, Mark::None) => None,
-                (Method::Telex, Mark::Hat) => Some(l.base),
-                (Method::Telex, Mark::Breve | Mark::Horn) => Some('w'),
-                (Method::Telex, Mark::Stroke) => Some('d'),
-                (Method::Vni, Mark::Hat) => Some('6'),
-                (Method::Vni, Mark::Horn) => Some('7'),
-                (Method::Vni, Mark::Breve) => Some('8'),
-                (Method::Vni, Mark::Stroke) => Some('9'),
-            };
-            out.extend(key);
+            out.push(if l.upper { l.base.to_ascii_uppercase() } else { l.base });
+            match l.mark {
+                Mark::None => {}
+                Mark::Hat => out.push(l.base),
+                Mark::Breve | Mark::Horn => out.push('w'),
+                Mark::Stroke => out.push('d'),
+            }
         }
-        let tone_key = match (method, self.tone) {
-            (_, Tone::None) => None,
-            (Method::Telex, t) => Some(['s', 'f', 'r', 'x', 'j'][t as usize - 1]),
-            (Method::Vni, t) => Some(['1', '2', '3', '4', '5'][t as usize - 1]),
-        };
-        out.extend(tone_key);
+        if self.tone != Tone::None {
+            out.push(['s', 'f', 'r', 'x', 'j'][self.tone as usize - 1]);
+        }
         out
     }
 }
 
-/// Bộ gõ cho một ô nhập liệu: giữ từ đang gõ dở.
+/// Bộ gõ Telex cho một ô nhập liệu: giữ từ đang gõ dở.
 #[derive(Clone, Debug)]
 pub struct Engine {
-    method: Method,
     modern_tone: bool,
     restore_invalid: bool,
     raw: Vec<char>,
     word: Word,
+    /// Từ vừa kết thúc bằng dấu cách/dấu câu và số ký tự ngăn cách gõ sau nó:
+    /// xoá lùi hết các ký tự đó thì gõ tiếp được vào từ cũ (thêm dấu), giống Unikey.
+    prev: Option<Box<(Vec<char>, Word)>>,
+    gap: u32,
+}
+
+impl Default for Engine {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Engine {
-    pub fn new(method: Method) -> Self {
+    pub fn new() -> Self {
         Engine {
-            method,
             modern_tone: false,
             restore_invalid: true,
             raw: Vec::new(),
             word: Word::new(),
+            prev: None,
+            gap: 0,
         }
     }
 
-    pub fn method(&self) -> Method {
-        self.method
-    }
-
-    pub fn set_method(&mut self, method: Method) {
-        if method != self.method {
-            self.method = method;
-            self.reset();
-        }
-    }
-
-    /// true: đặt dấu kiểu mới ("hoà", "thuý"); false: kiểu cũ ("hòa", "thúy").
+    /// true: đặt dấu kiểu mới ("hoà", "thuý"); false (mặc định): kiểu cũ ("hòa", "thúy").
     pub fn set_modern_tone(&mut self, modern: bool) {
         self.modern_tone = modern;
     }
 
-    /// true: từ không phải tiếng Việt thì trả lại đúng các phím đã gõ.
+    /// true (mặc định): từ không phải tiếng Việt thì trả lại đúng các phím đã gõ.
     pub fn set_restore_invalid(&mut self, restore: bool) {
         self.restore_invalid = restore;
     }
@@ -540,25 +501,36 @@ impl Engine {
         self.raw.is_empty()
     }
 
+    /// Quên hẳn từ đang gõ và từ trước đó (đổi chỗ con trỏ, Enter, phím tắt...).
     pub fn reset(&mut self) {
         self.raw.clear();
         self.word = Word::new();
+        self.prev = None;
+        self.gap = 0;
     }
 
-    fn accepts(&self, k: char) -> bool {
-        k.is_ascii_alphabetic()
-            || (self.method == Method::Vni && k.is_ascii_digit() && !self.raw.is_empty())
+    /// Đã gõ một ký tự ngăn cách (dấu cách, dấu câu) vào ứng dụng: kết thúc từ
+    /// hiện tại nhưng vẫn nhớ nó để xoá lùi quay lại được.
+    pub fn separator(&mut self) {
+        if !self.raw.is_empty() {
+            let raw = std::mem::take(&mut self.raw);
+            let word = std::mem::replace(&mut self.word, Word::new());
+            self.prev = Some(Box::new((raw, word)));
+            self.gap = 1;
+        } else if self.prev.is_some() {
+            self.gap += 1;
+        }
     }
 
     /// Đưa một phím vào từ đang gõ. Trả về false nếu phím không thuộc về từ
-    /// (dấu cách, dấu câu...): khi đó bên gọi cần chốt từ hiện tại.
+    /// (dấu cách, dấu câu...): khi đó bên gọi cần kết thúc từ hiện tại.
     pub fn process(&mut self, k: char) -> bool {
-        if !self.accepts(k) {
+        if !k.is_ascii_alphabetic() {
             return false;
         }
         let repeat = self.raw.last().is_some_and(|c| c.eq_ignore_ascii_case(&k));
         self.word.undone = false;
-        self.word.apply(k, self.method);
+        self.word.apply(k);
         // Phím lặp lại ngay để bỏ dấu thì không tính ("puss" -> "pus").
         if !(self.word.undone && repeat) {
             self.raw.push(k);
@@ -584,21 +556,33 @@ impl Engine {
         }
     }
 
-    /// Xoá lùi một ký tự trong từ đang gõ. Trả về false nếu từ đang rỗng.
+    /// Xoá lùi một ký tự. Trả về true nếu ký tự đó thuộc từ đang gõ (bên gọi
+    /// cập nhật lại từ). Trả về false nếu từ đang rỗng: phím Backspace được để
+    /// cho ứng dụng xoá, và nếu nó xoá hết các ký tự ngăn cách sau từ trước thì
+    /// từ trước trở thành từ đang gõ (`is_empty()` thành false).
     pub fn backspace(&mut self) -> bool {
         if self.raw.is_empty() {
+            if self.prev.is_some() {
+                self.gap = self.gap.saturating_sub(1);
+                if self.gap == 0 {
+                    let (raw, word) = *self.prev.take().unwrap();
+                    self.raw = raw;
+                    self.word = word;
+                }
+            }
             return false;
         }
         if self.showing_raw() {
             self.raw.pop();
-            self.word = Word::replay(&self.raw, self.method);
+            self.word = Word::replay(&self.raw);
         } else {
             self.word.letters.pop();
             if self.word.vowel_range().is_none() {
                 self.word.tone = Tone::None;
             }
-            self.raw = self.word.encode(self.method);
+            self.raw = self.word.encode();
         }
+        self.word.escaped = None;
         true
     }
 }
@@ -607,20 +591,12 @@ impl Engine {
 mod tests {
     use super::*;
 
-    fn typed(method: Method, keys: &str) -> String {
-        let mut e = Engine::new(method);
+    fn telex(keys: &str) -> String {
+        let mut e = Engine::new();
         for k in keys.chars() {
             assert!(e.process(k), "phím {k:?} bị từ chối trong {keys:?}");
         }
         e.text()
-    }
-
-    fn telex(keys: &str) -> String {
-        typed(Method::Telex, keys)
-    }
-
-    fn vni(keys: &str) -> String {
-        typed(Method::Vni, keys)
     }
 
     #[test]
@@ -689,6 +665,17 @@ mod tests {
             ("xoong", "xông"),
             ("xooong", "xoong"),
             ("nghieeng", "nghiêng"),
+            ("uuw", "ưu"),
+            ("huuw", "hưu"),
+            ("cuuw", "cưu"),
+            ("muaw", "mưa"),
+            ("muwa", "mưa"),
+            ("tuwuw", "tuwuw"),
+            ("oaw", "oă"),
+            ("xoawn", "xoăn"),
+            ("quawng", "quăng"),
+            ("hoiw", "hơi"),
+            ("guiw", "gưi"),
         ];
         for (k, want) in cases {
             assert_eq!(telex(k), want, "telex {k}");
@@ -704,7 +691,7 @@ mod tests {
 
     #[test]
     fn no_restore() {
-        let mut e = Engine::new(Method::Telex);
+        let mut e = Engine::new();
         e.set_restore_invalid(false);
         for k in "text".chars() {
             e.process(k);
@@ -714,7 +701,7 @@ mod tests {
 
     #[test]
     fn modern_tone() {
-        let mut e = Engine::new(Method::Telex);
+        let mut e = Engine::new();
         e.set_modern_tone(true);
         for k in "hoaf".chars() {
             e.process(k);
@@ -723,27 +710,8 @@ mod tests {
     }
 
     #[test]
-    fn vni_basic() {
-        let cases = [
-            ("vie65t", "việt"),
-            ("vie6t5", "việt"),
-            ("d9u7o7ng2", "đường"),
-            ("nguo72i", "người"),
-            ("a8n", "ăn"),
-            ("to6i", "tôi"),
-            ("a11", "a1"),
-            ("ca1c", "các"),
-        ];
-        for (k, want) in cases {
-            assert_eq!(vni(k), want, "vni {k}");
-        }
-    }
-
-    #[test]
-    fn vni_digit_alone_not_accepted() {
-        let mut e = Engine::new(Method::Vni);
-        assert!(!e.process('1'));
-        let mut t = Engine::new(Method::Telex);
+    fn non_letters_end_word() {
+        let mut t = Engine::new();
         assert!(t.process('a'));
         assert!(!t.process('1'));
         assert!(!t.process(' '));
@@ -751,7 +719,7 @@ mod tests {
 
     #[test]
     fn backspace() {
-        let mut e = Engine::new(Method::Telex);
+        let mut e = Engine::new();
         for k in "vieejt".chars() {
             e.process(k);
         }
@@ -760,7 +728,7 @@ mod tests {
         e.process('c');
         assert_eq!(e.text(), "việc");
 
-        let mut e = Engine::new(Method::Telex);
+        let mut e = Engine::new();
         for k in "classs".chars() {
             e.process(k);
         }
@@ -768,10 +736,62 @@ mod tests {
         e.backspace();
         assert_eq!(e.text(), "clas");
 
-        let mut e = Engine::new(Method::Telex);
+        let mut e = Engine::new();
         e.process('a');
         assert!(e.backspace());
         assert!(e.is_empty());
         assert!(!e.backspace());
+    }
+
+    fn type_into(e: &mut Engine, app: &mut String, keys: &str) {
+        for k in keys.chars() {
+            if k == '<' {
+                if !e.backspace() {
+                    app.pop();
+                    continue;
+                }
+            } else if e.process(k) {
+            } else {
+                e.separator();
+                app.push(k);
+                continue;
+            }
+            // Thay phần từ đang gõ trong app bằng chữ mới.
+            let typed_len = app.chars().rev().take_while(|c| !" ,.".contains(*c)).count();
+            for _ in 0..typed_len {
+                app.pop();
+            }
+            app.push_str(&e.text());
+        }
+    }
+
+    #[test]
+    fn backspace_over_space_resumes_word() {
+        // Gõ "nua ", xoá dấu cách, gõ thêm "wx" -> "nữa".
+        let mut e = Engine::new();
+        let mut app = String::new();
+        type_into(&mut e, &mut app, "nua <");
+        assert_eq!(app, "nua");
+        assert!(!e.is_empty(), "xoá dấu cách thì quay lại từ cũ");
+        type_into(&mut e, &mut app, "wx");
+        assert_eq!(app, "nữa");
+
+        // Nhiều dấu cách, và xoá cả từ sau.
+        let mut e = Engine::new();
+        let mut app = String::new();
+        type_into(&mut e, &mut app, "vuong  ab<<<<f");
+        assert_eq!(app, "vuòng");
+        type_into(&mut e, &mut app, "w ");
+        assert_eq!(app, "vường ");
+
+        // Đã reset (Enter, bấm chuột) thì không quay lại.
+        let mut e = Engine::new();
+        let mut app = String::new();
+        type_into(&mut e, &mut app, "nua ");
+        e.reset();
+        type_into(&mut e, &mut app, "<");
+        assert!(e.is_empty());
+        e.process('s');
+        assert_eq!(e.text(), "s");
     }
 }

@@ -29,9 +29,6 @@ CloseApplications=force
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
-[Tasks]
-Name: "autostart"; Description: "Khởi động HFastKey cùng Windows"; GroupDescription: "Tuỳ chọn:"
-
 [Files]
 Source: "..\..\target\release\hfastkey.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\..\README.md"; DestDir: "{app}"; Flags: ignoreversion
@@ -42,7 +39,7 @@ Name: "{autoprograms}\HFastKey"; Filename: "{app}\hfastkey.exe"; Comment: "Bộ 
 Name: "{autoprograms}\Gỡ HFastKey"; Filename: "{uninstallexe}"
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "HFastKey"; ValueData: """{app}\hfastkey.exe"""; Flags: uninsdeletevalue; Tasks: autostart
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "HFastKey"; ValueData: """{app}\hfastkey.exe"""; Flags: uninsdeletevalue
 
 [Run]
 Filename: "{app}\hfastkey.exe"; Description: "Chạy HFastKey ngay"; Flags: nowait postinstall skipifsilent

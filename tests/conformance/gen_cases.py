@@ -145,7 +145,7 @@ def from_syllables(path):
         syl = unicodedata.normalize("NFC", line.strip())
         if not syl or " " in syl:
             continue
-        for method in ("telex", "vni"):
+        for method in ("telex",):
             variants = ["end", "after"] + (["w_end"] if "ươ" in syl.lower() else [])
             for v in variants:
                 keys = syllable_keys(method, syl, v)
@@ -166,7 +166,7 @@ def from_words(path, syllables):
         # Chỉ lấy cụm gồm toàn âm tiết tiếng Việt hợp lệ (bỏ từ mượn như "fax").
         if not sylls or any(s.lower() not in syllables for s in sylls):
             continue
-        for method in ("telex", "vni"):
+        for method in ("telex",):
             keys = phrase_keys(method, phrase)
             if keys:
                 emit(f"words-{method}", method, "*", 1, keys, phrase)

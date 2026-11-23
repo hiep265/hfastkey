@@ -4,7 +4,7 @@
 //! thường thì để đi qua; khi cần thêm dấu thì chặn phím gốc, gửi vài phím
 //! Backspace để xoá phần chữ cần đổi rồi gửi chữ mới (ký tự Unicode).
 
-use hfastkey_core::{Config, Engine, ToggleKey};
+use hfastkey_core::Engine;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Key {
@@ -57,7 +57,7 @@ impl Default for State {
 impl State {
     pub fn new() -> Self {
         State {
-            engine: Engine::new(hfastkey_core::Method::Telex),
+            engine: Engine::new(),
             committed: String::new(),
             ctrl_shift_armed: false,
         }
@@ -67,12 +67,6 @@ impl State {
     pub fn reset(&mut self) {
         self.engine.reset();
         self.committed.clear();
-    }
-
-    fn apply_config(&mut self, cfg: &Config) {
-        self.engine.set_method(cfg.method);
-        self.engine.set_modern_tone(cfg.modern_tone);
-        self.engine.set_restore_invalid(cfg.restore_invalid);
     }
 
     fn toggle(&mut self, enabled: &mut bool) -> Action {
@@ -85,39 +79,22 @@ impl State {
         }
     }
 
-    pub fn key_up(&mut self, cfg: &Config, enabled: &mut bool, key: Key) -> Option<bool> {
-        if cfg.toggle_key == ToggleKey::CtrlShift
-            && self.ctrl_shift_armed
-            && matches!(key, Key::Ctrl | Key::Shift)
-        {
+    /// Nhả phím. Ctrl+Shift: nhấn cả hai (không kèm phím khác) rồi nhả thì bật/tắt.
+    pub fn key_up(&mut self, enabled: &mut bool, key: Key) -> Option<bool> {
+        if self.ctrl_shift_armed && matches!(key, Key::Ctrl | Key::Shift) {
             self.ctrl_shift_armed = false;
             return self.toggle(enabled).toggled;
         }
         None
     }
 
-    pub fn key_down(&mut self, cfg: &Config, enabled: &mut bool, key: Key, m: Mods) -> Action {
-        if self.engine.is_empty() {
-            self.apply_config(cfg);
-        }
+    pub fn key_down(&mut self, enabled: &mut bool, key: Key, m: Mods) -> Action {
         let pass = Action::default();
-
-        // Ctrl+Shift: nhấn cả hai (không kèm phím khác) rồi nhả.
-        if cfg.toggle_key == ToggleKey::CtrlShift {
-            self.ctrl_shift_armed = match key {
-                Key::Ctrl => m.shift && !m.alt && !m.win,
-                Key::Shift => m.ctrl && !m.alt && !m.win,
-                _ => false,
-            };
-        }
-        let is_toggle = match cfg.toggle_key {
-            ToggleKey::CtrlSpace => key == Key::Space && m.ctrl && !m.alt && !m.win,
-            ToggleKey::AltZ => matches!(key, Key::Char('z' | 'Z')) && m.alt && !m.ctrl && !m.win,
-            ToggleKey::CtrlShift => false,
+        self.ctrl_shift_armed = match key {
+            Key::Ctrl => m.shift && !m.alt && !m.win,
+            Key::Shift => m.ctrl && !m.alt && !m.win,
+            _ => false,
         };
-        if is_toggle {
-            return self.toggle(enabled);
-        }
 
         if !*enabled {
             self.reset();
@@ -134,11 +111,17 @@ impl State {
 
         match key {
             Key::Backspace => {
-                if self.engine.is_empty() {
-                    return pass;
+                if self.engine.backspace() {
+                    return self.output(None);
                 }
-                self.engine.backspace();
-                self.output(None)
+                // Ứng dụng tự xoá; nếu xoá hết dấu cách sau từ trước thì gõ tiếp được vào từ đó.
+                self.committed = self.engine.text();
+                pass
+            }
+            Key::Space => {
+                self.engine.separator();
+                self.committed.clear();
+                pass
             }
             Key::Char(c) => {
                 if self.engine.process(c) {
@@ -168,9 +151,6 @@ impl State {
         let backspaces = self.committed.chars().count() - keep;
         let text: String = new.chars().skip(keep).collect();
         self.committed = new;
-        if self.engine.is_empty() {
-            self.committed.clear();
-        }
 
         // Trường hợp phím gốc tự làm đúng việc: để nó đi qua cho tự nhiên.
         let natural = match typed {
@@ -196,18 +176,17 @@ mod tests {
     /// Mô phỏng ô nhập liệu để kiểm tra kết quả cuối cùng.
     struct Sim {
         st: State,
-        cfg: Config,
         on: bool,
         app: String,
     }
 
     impl Sim {
         fn new() -> Self {
-            Sim { st: State::new(), cfg: Config::default(), on: true, app: String::new() }
+            Sim { st: State::new(), on: true, app: String::new() }
         }
 
         fn press(&mut self, key: Key, m: Mods) -> Action {
-            let a = self.st.key_down(&self.cfg, &mut self.on, key, m);
+            let a = self.st.key_down(&mut self.on, key, m);
             if a.block {
                 for _ in 0..a.backspaces {
                     self.app.pop();
@@ -230,6 +209,7 @@ mod tests {
             for c in s.chars() {
                 let key = match c {
                     ' ' => Key::Space,
+                    '<' => Key::Backspace,
                     '.' | ',' | '?' => {
                         self.press(Key::Other, Mods::default());
                         self.app.push(c);
@@ -291,36 +271,25 @@ mod tests {
     }
 
     #[test]
-    fn toggles() {
+    fn ctrl_shift_toggles() {
         let mut s = Sim::new();
         let ctrl = Mods { ctrl: true, ..Default::default() };
-        let a = s.press(Key::Space, ctrl);
-        assert_eq!(a.toggled, Some(false));
-        s.type_str("aa");
-        assert_eq!(s.app, "aa", "tắt thì gõ chữ thường");
-
-        let mut s = Sim::new();
-        s.cfg.toggle_key = ToggleKey::CtrlShift;
         s.press(Key::Ctrl, Mods::default());
         s.press(Key::Shift, ctrl);
-        assert_eq!(s.st.key_up(&s.cfg, &mut s.on, Key::Shift), Some(false));
+        assert_eq!(s.st.key_up(&mut s.on, Key::Shift), Some(false));
+        s.type_str("aa");
+        assert_eq!(s.app, "aa", "tắt thì gõ chữ thường");
         // Ctrl+Shift+T là phím tắt, không chuyển.
         s.press(Key::Ctrl, Mods::default());
         s.press(Key::Shift, ctrl);
         s.press(Key::Char('T'), Mods { ctrl: true, shift: true, ..Default::default() });
-        assert_eq!(s.st.key_up(&s.cfg, &mut s.on, Key::Shift), None);
-
-        let mut s = Sim::new();
-        s.cfg.toggle_key = ToggleKey::AltZ;
-        let alt = Mods { alt: true, ..Default::default() };
-        assert_eq!(s.press(Key::Char('z'), alt).toggled, Some(false));
+        assert_eq!(s.st.key_up(&mut s.on, Key::Shift), None);
     }
 
     #[test]
-    fn vni() {
+    fn uuw_and_resume_after_space() {
         let mut s = Sim::new();
-        s.cfg.method = hfastkey_core::Method::Vni;
-        s.type_str("Vie65t Nam");
-        assert_eq!(s.app, "Việt Nam");
+        s.type_str("uuw nua <wx vuong  ab<<<<fw");
+        assert_eq!(s.app, "ưu nữa vường");
     }
 }

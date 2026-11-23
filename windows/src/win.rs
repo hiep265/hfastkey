@@ -1,15 +1,13 @@
 //! Phần gọi API Windows: hook bàn phím/chuột, gửi phím, biểu tượng khay hệ thống.
 
 use crate::logic::{Key, Mods, State};
-use hfastkey_core::{Config, Method, ToggleKey};
 use std::cell::RefCell;
 use std::ptr::{null, null_mut};
 use windows_sys::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HWND, LPARAM, LRESULT, POINT, WPARAM};
 use windows_sys::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Registry::{
-    RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegQueryValueExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER,
-    KEY_QUERY_VALUE, KEY_SET_VALUE, REG_SZ,
+    RegCloseKey, RegOpenKeyExW, RegSetValueExW, HKEY, HKEY_CURRENT_USER, KEY_SET_VALUE, REG_SZ,
 };
 use windows_sys::Win32::System::Threading::CreateMutexW;
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
@@ -22,9 +20,9 @@ use windows_sys::Win32::UI::Shell::{
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CallNextHookEx, CreateIconIndirect, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
-    DispatchMessageW, GetCursorPos, GetForegroundWindow, GetMessageW, MessageBoxW, PostQuitMessage, RegisterClassW,
+    DispatchMessageW, GetCursorPos, GetForegroundWindow, GetMessageW, PostQuitMessage, RegisterClassW,
     SetForegroundWindow, SetWindowsHookExW, TrackPopupMenu, TranslateMessage, HICON, HWND_MESSAGE, ICONINFO,
-    KBDLLHOOKSTRUCT, MB_ICONINFORMATION, MF_CHECKED, MF_SEPARATOR, MF_STRING, MF_UNCHECKED, MSG, TPM_BOTTOMALIGN,
+    KBDLLHOOKSTRUCT, MF_STRING, MSG, TPM_BOTTOMALIGN,
     TPM_RIGHTBUTTON, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_COMMAND, WM_KEYDOWN, WM_KEYUP, WM_LBUTTONDOWN,
     WM_LBUTTONUP, WM_MBUTTONDOWN, WM_RBUTTONDOWN, WM_RBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WNDCLASSW,
 };
@@ -35,21 +33,10 @@ const WM_TRAY: u32 = WM_APP + 1;
 const RUN_KEY: &str = "Software\\Microsoft\\Windows\\CurrentVersion\\Run";
 const RUN_VALUE: &str = "HFastKey";
 
-const ID_TOGGLE: usize = 1;
-const ID_TELEX: usize = 2;
-const ID_VNI: usize = 3;
-const ID_RESTORE: usize = 4;
-const ID_MODERN: usize = 5;
-const ID_KEY_CTRL_SHIFT: usize = 6;
-const ID_KEY_ALT_Z: usize = 7;
-const ID_KEY_CTRL_SPACE: usize = 8;
-const ID_AUTOSTART: usize = 9;
-const ID_ABOUT: usize = 10;
-const ID_EXIT: usize = 11;
+const ID_EXIT: usize = 1;
 
 struct App {
     state: State,
-    cfg: Config,
     enabled: bool,
     hwnd: HWND,
     icon_on: HICON,
@@ -145,7 +132,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                             app.last_foreground = fg;
                             app.state.reset();
                         }
-                        let action = app.state.key_down(&app.cfg, &mut app.enabled, key, m);
+                        let action = app.state.key_down(&mut app.enabled, key, m);
                         if let Some(on) = action.toggled {
                             app.set_icon(on);
                         }
@@ -155,7 +142,7 @@ unsafe extern "system" fn keyboard_hook(code: i32, wparam: WPARAM, lparam: LPARA
                         action.block
                     }
                     WM_KEYUP | WM_SYSKEYUP => {
-                        if let Some(on) = app.state.key_up(&app.cfg, &mut app.enabled, key) {
+                        if let Some(on) = app.state.key_up(&mut app.enabled, key) {
                             app.set_icon(on);
                         }
                         false
@@ -239,130 +226,52 @@ fn tray_data(hwnd: HWND, icon: HICON, tip: &str) -> NOTIFYICONDATAW {
 }
 
 impl App {
-    fn tooltip(&self) -> String {
-        let method = match self.cfg.method {
-            Method::Telex => "Telex",
-            Method::Vni => "VNI",
-        };
-        let state = if self.enabled { "Tiếng Việt" } else { "English" };
-        format!("HFastKey: {state} ({method}). {} để chuyển", self.cfg.toggle_key.label())
+    fn tooltip(&self) -> &'static str {
+        if self.enabled {
+            "HFastKey: Tiếng Việt (Telex). Bấm hoặc Ctrl+Shift để tắt"
+        } else {
+            "HFastKey: English. Bấm hoặc Ctrl+Shift để bật"
+        }
     }
 
     fn set_icon(&mut self, on: bool) {
         self.enabled = on;
         let icon = if on { self.icon_on } else { self.icon_off };
-        let nid = tray_data(self.hwnd, icon, &self.tooltip());
+        let nid = tray_data(self.hwnd, icon, self.tooltip());
         unsafe {
             Shell_NotifyIconW(NIM_MODIFY, &nid);
         }
     }
-
-    fn save(&mut self) {
-        let _ = self.cfg.save();
-        self.state.reset();
-        let on = self.enabled;
-        self.set_icon(on);
-    }
 }
 
-fn reg_open(access: u32) -> Option<HKEY> {
+/// Ghi HFastKey vào danh sách tự chạy khi đăng nhập Windows.
+fn register_autostart() {
     let mut key: HKEY = null_mut();
     let path = wide(RUN_KEY);
-    let r = unsafe { RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, access, &mut key) };
-    (r == 0).then_some(key)
-}
-
-fn autostart_enabled() -> bool {
-    let Some(key) = reg_open(KEY_QUERY_VALUE) else { return false };
-    let name = wide(RUN_VALUE);
-    let r = unsafe { RegQueryValueExW(key, name.as_ptr(), null(), null_mut(), null_mut(), null_mut()) };
-    unsafe { RegCloseKey(key) };
-    r == 0
-}
-
-fn set_autostart(on: bool) {
-    let Some(key) = reg_open(KEY_SET_VALUE) else { return };
-    let name = wide(RUN_VALUE);
     unsafe {
-        if on {
-            if let Ok(exe) = std::env::current_exe() {
-                let val = wide(&format!("\"{}\"", exe.display()));
-                RegSetValueExW(key, name.as_ptr(), 0, REG_SZ, val.as_ptr() as *const u8, (val.len() * 2) as u32);
-            }
-        } else {
-            RegDeleteValueW(key, name.as_ptr());
+        if RegOpenKeyExW(HKEY_CURRENT_USER, path.as_ptr(), 0, KEY_SET_VALUE, &mut key) != 0 {
+            return;
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            let name = wide(RUN_VALUE);
+            let val = wide(&format!("\"{}\"", exe.display()));
+            RegSetValueExW(key, name.as_ptr(), 0, REG_SZ, val.as_ptr() as *const u8, (val.len() * 2) as u32);
         }
         RegCloseKey(key);
     }
 }
 
+/// Chuột phải: chỉ có mục Thoát.
 fn show_menu(hwnd: HWND) {
-    let Some((enabled, cfg)) = with_app(|a| (a.enabled, a.cfg.clone())) else { return };
-    let check = |b: bool| if b { MF_CHECKED } else { MF_UNCHECKED };
     unsafe {
         let menu = CreatePopupMenu();
-        let add = |flags: u32, id: usize, text: &str| {
-            let t = wide(text);
-            AppendMenuW(menu, flags, id, t.as_ptr());
-        };
-        add(MF_STRING | check(enabled), ID_TOGGLE, &format!("Bật tiếng Việt\t{}", cfg.toggle_key.label()));
-        add(MF_SEPARATOR, 0, "");
-        add(MF_STRING | check(cfg.method == Method::Telex), ID_TELEX, "Kiểu gõ Telex");
-        add(MF_STRING | check(cfg.method == Method::Vni), ID_VNI, "Kiểu gõ VNI");
-        add(MF_SEPARATOR, 0, "");
-        add(MF_STRING | check(cfg.toggle_key == ToggleKey::CtrlShift), ID_KEY_CTRL_SHIFT, "Phím chuyển Ctrl+Shift");
-        add(MF_STRING | check(cfg.toggle_key == ToggleKey::AltZ), ID_KEY_ALT_Z, "Phím chuyển Alt+Z");
-        add(MF_STRING | check(cfg.toggle_key == ToggleKey::CtrlSpace), ID_KEY_CTRL_SPACE, "Phím chuyển Ctrl+Space");
-        add(MF_SEPARATOR, 0, "");
-        add(MF_STRING | check(cfg.restore_invalid), ID_RESTORE, "Tự khôi phục phím với từ sai");
-        add(MF_STRING | check(cfg.modern_tone), ID_MODERN, "Đặt dấu kiểu mới (oà, uý)");
-        add(MF_STRING | check(autostart_enabled()), ID_AUTOSTART, "Khởi động cùng Windows");
-        add(MF_SEPARATOR, 0, "");
-        add(MF_STRING, ID_ABOUT, "Giới thiệu HFastKey");
-        add(MF_STRING, ID_EXIT, "Thoát");
-
+        let t = wide("Thoát HFastKey");
+        AppendMenuW(menu, MF_STRING, ID_EXIT, t.as_ptr());
         let mut pt = POINT { x: 0, y: 0 };
         GetCursorPos(&mut pt);
         SetForegroundWindow(hwnd);
         TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_BOTTOMALIGN, pt.x, pt.y, 0, hwnd, null());
         DestroyMenu(menu);
-    }
-}
-
-fn on_command(id: usize) {
-    match id {
-        ID_EXIT => unsafe { PostQuitMessage(0) },
-        ID_AUTOSTART => set_autostart(!autostart_enabled()),
-        ID_ABOUT => {
-            let text = wide(
-                "HFastKey 0.1.0\nBộ gõ tiếng Việt (Telex/VNI) viết bằng Rust.\n\n\
-                 Bấm chuột trái vào biểu tượng để bật/tắt, chuột phải để mở menu.\n\
-                 https://github.com/hiep265/hfastkey",
-            );
-            let title = wide("HFastKey");
-            unsafe { MessageBoxW(null_mut(), text.as_ptr(), title.as_ptr(), MB_ICONINFORMATION) };
-        }
-        _ => {
-            with_app(|a| {
-                match id {
-                    ID_TOGGLE => {
-                        let on = !a.enabled;
-                        a.state.reset();
-                        a.set_icon(on);
-                        return;
-                    }
-                    ID_TELEX => a.cfg.method = Method::Telex,
-                    ID_VNI => a.cfg.method = Method::Vni,
-                    ID_RESTORE => a.cfg.restore_invalid = !a.cfg.restore_invalid,
-                    ID_MODERN => a.cfg.modern_tone = !a.cfg.modern_tone,
-                    ID_KEY_CTRL_SHIFT => a.cfg.toggle_key = ToggleKey::CtrlShift,
-                    ID_KEY_ALT_Z => a.cfg.toggle_key = ToggleKey::AltZ,
-                    ID_KEY_CTRL_SPACE => a.cfg.toggle_key = ToggleKey::CtrlSpace,
-                    _ => return,
-                }
-                a.save();
-            });
-        }
     }
 }
 
@@ -383,7 +292,9 @@ unsafe extern "system" fn wndproc(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: 
             0
         }
         WM_COMMAND => {
-            on_command(wparam & 0xffff);
+            if wparam & 0xffff == ID_EXIT {
+                PostQuitMessage(0);
+            }
             0
         }
         _ => DefWindowProcW(hwnd, msg, wparam, lparam),
@@ -430,17 +341,16 @@ pub fn run() {
             null(),
         );
 
-        let cfg = Config::load();
+        register_autostart();
         let app = App {
             state: State::new(),
-            enabled: cfg.start_enabled,
-            cfg,
+            enabled: true,
             hwnd,
             icon_on: make_icon(true),
             icon_off: make_icon(false),
             last_foreground: null_mut(),
         };
-        let nid = tray_data(hwnd, if app.enabled { app.icon_on } else { app.icon_off }, &app.tooltip());
+        let nid = tray_data(hwnd, if app.enabled { app.icon_on } else { app.icon_off }, app.tooltip());
         Shell_NotifyIconW(NIM_ADD, &nid);
         APP.with(|a| *a.borrow_mut() = Some(app));
 

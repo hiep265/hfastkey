@@ -5,7 +5,7 @@ cd "$(dirname "$0")/.."
 VERSION="${VERSION:-$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)}"
 NAME="hfastkey-$VERSION-linux-x86_64"
 rm -rf "dist/$NAME" && mkdir -p "dist/$NAME/bin"
-cp target/release/hfastkey-daemon target/release/hfastkey-settings "dist/$NAME/bin/"
+cp target/release/hfastkey-daemon "dist/$NAME/bin/"
 cp scripts/install.sh scripts/uninstall.sh README.md LICENSE "dist/$NAME/"
 # Trong gói, install.sh nằm ngay cạnh bin/.
 sed -i 's#^ROOT="$(cd "$(dirname "$0")/.." \&\& pwd)"#ROOT="$(cd "$(dirname "$0")" \&\& pwd)"#' "dist/$NAME/install.sh"

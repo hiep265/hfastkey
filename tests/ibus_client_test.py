@@ -102,14 +102,18 @@ for client_commit in (True, False):
     ic.focus_in()
 
     events.clear()
-    key(ic, IBus.KEY_space, 57, IBus.ModifierType.CONTROL_MASK)
-    key(ic, IBus.KEY_space, 57, IBus.ModifierType.CONTROL_MASK | IBus.ModifierType.RELEASE_MASK)
+    def ctrl_shift():
+        key(ic, IBus.KEY_Control_L, 29, 0)
+        key(ic, IBus.KEY_Shift_L, 42, IBus.ModifierType.CONTROL_MASK)
+        key(ic, IBus.KEY_Shift_L, 42, IBus.ModifierType.CONTROL_MASK | IBus.ModifierType.SHIFT_MASK | IBus.ModifierType.RELEASE_MASK)
+        key(ic, IBus.KEY_Control_L, 29, IBus.ModifierType.CONTROL_MASK | IBus.ModifierType.RELEASE_MASK)
+
+    ctrl_shift()
     r = key(ic, ord("a"), 30)
-    check(tag + " Ctrl+Space tắt tiếng Việt", r is False)
-    key(ic, IBus.KEY_space, 57, IBus.ModifierType.CONTROL_MASK)
-    key(ic, IBus.KEY_space, 57, IBus.ModifierType.CONTROL_MASK | IBus.ModifierType.RELEASE_MASK)
+    check(tag + " Ctrl+Shift tắt tiếng Việt", r is False)
+    ctrl_shift()
     r = key(ic, ord("a"), 30)
-    check(tag + " Ctrl+Space bật lại", r is True)
+    check(tag + " Ctrl+Shift bật lại", r is True)
     ic.reset()
     ic.destroy()
 
@@ -147,6 +151,8 @@ class FakeEntry:
         handled = key(self.ic, keyval, keycode, state)
         if not handled and 0x20 <= keyval < 0x7F and not state & IBus.ModifierType.CONTROL_MASK:
             self.text += chr(keyval)
+        elif not handled and keyval == IBus.KEY_BackSpace:
+            self.text = self.text[:-1]
         self.report()
         return handled
 
@@ -174,6 +180,13 @@ e.type("vieejt")
 e.press(IBus.KEY_BackSpace, 14)
 e.type("c classs pussh")
 check("[gõ thẳng] xoá lùi giữa từ + gõ tiếng Anh", e.text == "việc class push", e.text)
+e.press(IBus.KEY_Return, 28)
+e.text = ""
+e.report()
+e.type("nua ")
+e.press(IBus.KEY_BackSpace, 14)
+e.type("wx uuw")
+check("[gõ thẳng] xoá dấu cách rồi gõ dấu tiếp cho từ trước; uuw -> ưu", e.text == "nữa ưu", e.text)
 e.ic.destroy()
 
 print("FAILED: %d" % fail if fail else "ALL OK")

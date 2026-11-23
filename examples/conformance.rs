@@ -7,21 +7,21 @@
 //! đã biết (tests/conformance/known_differences.tsv): các ca này không tính là lỗi.
 //! Thoát với mã 1 nếu có ca sai ngoài danh sách đó.
 
-use hfastkey_core::{Engine, Method};
+use hfastkey_core::Engine;
 use std::collections::{BTreeMap, HashSet};
 use std::io::{self, BufRead};
 
 /// Gõ cả chuỗi phím như người dùng thật: chữ cái/chữ số vào từ đang gõ,
 /// ký tự khác (cách, dấu câu) kết thúc từ.
-fn type_keys(method: Method, modern: bool, restore: bool, keys: &str) -> String {
-    let mut e = Engine::new(method);
+fn type_keys(modern: bool, restore: bool, keys: &str) -> String {
+    let mut e = Engine::new();
     e.set_modern_tone(modern);
     e.set_restore_invalid(restore);
     let mut out = String::new();
     for c in keys.chars() {
         if !e.process(c) {
             out.push_str(&e.text());
-            e.reset();
+            e.separator();
             out.push(c);
         }
     }
@@ -60,18 +60,20 @@ fn main() {
             continue;
         }
         let (src, method, modern, restore, keys, expected) = (f[0], f[1], f[2], f[3], f[4], f[5]);
-        let method = if method == "vni" { Method::Vni } else { Method::Telex };
+        if method != "telex" {
+            continue; // HFastKey chỉ có Telex.
+        }
         let restore = restore == "1";
         let got = match modern {
             "*" => {
-                let old = type_keys(method, false, restore, keys);
+                let old = type_keys(false, restore, keys);
                 if old == expected {
                     old
                 } else {
-                    type_keys(method, true, restore, keys)
+                    type_keys(true, restore, keys)
                 }
             }
-            m => type_keys(method, m == "1", restore, keys),
+            m => type_keys(m == "1", restore, keys),
         };
         let st = stats.entry(src.to_string()).or_default();
         st.total += 1;

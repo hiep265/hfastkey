@@ -1,13 +1,15 @@
 //! Xử lý phím cho một ô nhập liệu (không phụ thuộc D-Bus, để test được).
 //!
 //! Hai chế độ:
-//! - Gõ thẳng (mặc định, giống Unikey): chữ được đưa ngay vào ứng dụng; khi cần
-//!   thêm dấu thì xoá vài ký tự trước con trỏ rồi gõ lại. Không có chữ "treo"
-//!   nên Enter/Tab/... đi thẳng tới ứng dụng, không thể mất chữ.
-//! - Gạch chân (preedit): dùng khi ứng dụng không cho xoá chữ quanh con trỏ
-//!   (terminal...), hoặc khi người dùng chọn.
+//! - Gõ thẳng (giống Unikey): chữ được đưa ngay vào ứng dụng; khi cần thêm dấu
+//!   thì xoá vài ký tự trước con trỏ rồi gõ lại. Không có chữ "treo" nên
+//!   Enter/Tab/... đi thẳng tới ứng dụng, không thể mất chữ.
+//! - Gạch chân (preedit): chỉ dùng khi ứng dụng không cho xoá chữ quanh con
+//!   trỏ (terminal...).
+//!
+//! Bật/tắt tiếng Việt: nhấn Ctrl+Shift (không kèm phím khác) rồi nhả.
 
-use hfastkey_core::{Config, Engine, ToggleKey};
+use hfastkey_core::Engine;
 
 // Mặt nạ trạng thái phím theo IBus.
 pub const SHIFT_MASK: u32 = 1 << 0;
@@ -21,7 +23,6 @@ pub const RELEASE_MASK: u32 = 1 << 30;
 const COMBO_MASK: u32 = CONTROL_MASK | MOD1_MASK | MOD4_MASK | SUPER_MASK | HYPER_MASK | META_MASK;
 
 const KEY_BACKSPACE: u32 = 0xff08;
-const KEY_SPACE: u32 = 0x20;
 const KEY_SHIFT_L: u32 = 0xffe1;
 const KEY_SHIFT_R: u32 = 0xffe2;
 const KEY_CONTROL_L: u32 = 0xffe3;
@@ -38,22 +39,7 @@ pub enum Out {
     Toggled(bool),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EnterMode {
-    /// (Chế độ gạch chân) chốt chữ rồi tự gửi lại phím (nhấn + nhả).
-    Forward,
-    /// (Chế độ gạch chân) chốt chữ rồi để phím gốc đi tiếp.
-    Passthrough,
-}
-
-/// Thông tin cho một lần xử lý phím.
-pub struct Ctx<'a> {
-    pub cfg: &'a Config,
-    /// Ứng dụng có báo chữ quanh con trỏ (cho phép xoá chữ) hay không.
-    pub surrounding: bool,
-    pub enter: EnterMode,
-}
-
+#[derive(Default)]
 pub struct KeyState {
     engine: Engine,
     swallow_release: Option<u32>,
@@ -67,7 +53,11 @@ pub struct KeyState {
     /// để phát hiện người dùng bấm chuột sang chỗ khác.
     word_start_before: Option<String>,
     snapshots: Vec<String>,
-    /// Đang chờ nhả Ctrl/Shift để bật/tắt (phím chuyển Ctrl+Shift).
+    /// Có từ trước (gõ thẳng, đã kết thúc bằng dấu cách/dấu câu) để xoá lùi
+    /// quay lại gõ tiếp; kèm chữ đứng trước từ đó.
+    prev_active: bool,
+    prev_start: Option<String>,
+    /// Đang chờ nhả Ctrl/Shift để bật/tắt.
     ctrl_shift_armed: bool,
 }
 
@@ -80,25 +70,8 @@ fn common_prefix_chars(a: &str, b: &str) -> usize {
 }
 
 impl KeyState {
-    pub fn new(cfg: &Config) -> Self {
-        let mut s = KeyState {
-            engine: Engine::new(cfg.method),
-            swallow_release: None,
-            word_direct: false,
-            committed: String::new(),
-            last_before: None,
-            word_start_before: None,
-            snapshots: Vec::new(),
-            ctrl_shift_armed: false,
-        };
-        s.apply_config(cfg);
-        s
-    }
-
-    fn apply_config(&mut self, cfg: &Config) {
-        self.engine.set_method(cfg.method);
-        self.engine.set_modern_tone(cfg.modern_tone);
-        self.engine.set_restore_invalid(cfg.restore_invalid);
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn has_word(&self) -> bool {
@@ -109,11 +82,13 @@ impl KeyState {
         self.word_direct
     }
 
-    /// Bỏ từ hiện tại khỏi bộ nhớ (chữ đã gõ thẳng vẫn nằm trong ứng dụng).
+    /// Quên từ hiện tại và từ trước (chữ đã gõ thẳng vẫn nằm trong ứng dụng).
     fn drop_word(&mut self) {
         self.engine.reset();
         self.committed.clear();
         self.snapshots.clear();
+        self.prev_active = false;
+        self.prev_start = None;
     }
 
     /// Lấy chữ đang gõ (chế độ gạch chân) ra và xoá trạng thái.
@@ -167,24 +142,13 @@ impl KeyState {
         if !add.is_empty() {
             out.push(Out::Commit(add));
         }
-        if self.engine.is_empty() {
-            self.drop_word();
+        if text.is_empty() {
+            // Xoá hết từ: vẫn nhớ từ trước (nếu có) để xoá tiếp quay lại.
+            self.committed.clear();
+            self.snapshots.clear();
         } else {
             self.snapshots.push(text.clone());
             self.committed = text;
-        }
-    }
-
-    /// Kết thúc từ hiện tại (không kèm phím nào).
-    pub fn finish(&mut self, out: &mut Vec<Out>) {
-        if !self.has_word() {
-            return;
-        }
-        if self.word_direct {
-            self.drop_word();
-        } else {
-            out.push(Out::Commit(self.take_word()));
-            out.push(Out::Preedit(String::new()));
         }
     }
 
@@ -194,22 +158,27 @@ impl KeyState {
         out.push(Out::Toggled(*enabled));
     }
 
+    /// Kết thúc từ hiện tại (không kèm phím nào).
+    pub fn finish(&mut self, out: &mut Vec<Out>) {
+        if self.has_word() && !self.word_direct {
+            out.push(Out::Commit(self.take_word()));
+            out.push(Out::Preedit(String::new()));
+        }
+        self.drop_word();
+    }
+
     /// Trả về true nếu phím đã được bộ gõ xử lý (ứng dụng không nhận phím gốc).
     pub fn key(
         &mut self,
-        ctx: &Ctx,
+        surrounding: bool,
         enabled: &mut bool,
         keyval: u32,
         keycode: u32,
         state: u32,
         out: &mut Vec<Out>,
     ) -> bool {
-        if !self.has_word() {
-            self.apply_config(ctx.cfg);
-        }
         let release = state & RELEASE_MASK != 0;
         let mods = state & !RELEASE_MASK;
-        let toggle_key = ctx.cfg.toggle_key;
 
         if release {
             if self.swallow_release == Some(keycode) {
@@ -217,33 +186,18 @@ impl KeyState {
                 return true;
             }
             let ctrl_or_shift = matches!(keyval, KEY_SHIFT_L | KEY_SHIFT_R | KEY_CONTROL_L | KEY_CONTROL_R);
-            if toggle_key == ToggleKey::CtrlShift && self.ctrl_shift_armed && ctrl_or_shift {
+            if self.ctrl_shift_armed && ctrl_or_shift {
                 self.ctrl_shift_armed = false;
                 self.toggle(enabled, out);
             }
             return false;
         }
 
-        // Phím chuyển Ctrl+Shift: nhấn Ctrl và Shift (không kèm phím nào khác) rồi nhả.
-        if toggle_key == ToggleKey::CtrlShift {
-            let arm = (matches!(keyval, KEY_CONTROL_L | KEY_CONTROL_R) && mods & COMBO_MASK == 0 && mods & SHIFT_MASK != 0)
-                || (matches!(keyval, KEY_SHIFT_L | KEY_SHIFT_R) && mods & COMBO_MASK == CONTROL_MASK);
-            self.ctrl_shift_armed = arm;
-            if arm {
-                return false;
-            }
-        }
-
-        let is_toggle = match toggle_key {
-            ToggleKey::CtrlSpace => keyval == KEY_SPACE && mods & COMBO_MASK == CONTROL_MASK,
-            ToggleKey::AltZ => matches!(keyval, 0x7a | 0x5a) && mods & COMBO_MASK == MOD1_MASK,
-            ToggleKey::CtrlShift => false,
-        };
-        if is_toggle {
-            self.toggle(enabled, out);
-            self.swallow_release = Some(keycode);
-            return true;
-        }
+        // Ctrl+Shift: nhấn Ctrl và Shift (không kèm phím nào khác) rồi nhả.
+        self.ctrl_shift_armed = (matches!(keyval, KEY_CONTROL_L | KEY_CONTROL_R)
+            && mods & COMBO_MASK == 0
+            && mods & SHIFT_MASK != 0)
+            || (matches!(keyval, KEY_SHIFT_L | KEY_SHIFT_R) && mods & COMBO_MASK == CONTROL_MASK);
 
         if !*enabled {
             self.drop_word();
@@ -257,23 +211,24 @@ impl KeyState {
 
         if mods & COMBO_MASK != 0 {
             // Phím tắt (Ctrl+C, Alt+Tab...): kết thúc từ rồi để phím đi tiếp.
-            return has_word && self.finish_then_key(ctx, keyval, keycode, mods, out);
+            return self.finish_then_key(keyval, keycode, mods, out);
         }
 
         if keyval == KEY_BACKSPACE {
-            if !has_word {
-                return false;
+            if has_word {
+                self.engine.backspace();
+                self.update(out);
+                return true;
             }
-            self.engine.backspace();
-            self.update(out);
-            return true;
+            self.backspace_outside_word(surrounding);
+            return false;
         }
 
         if (0x20..0x7f).contains(&keyval) {
             let ch = char::from_u32(keyval).unwrap_or(' ');
             if self.engine.process(ch) {
                 if !has_word {
-                    self.word_direct = !ctx.cfg.underline && ctx.surrounding;
+                    self.word_direct = surrounding;
                     self.word_start_before = self.last_before.clone();
                     self.snapshots.clear();
                     self.committed.clear();
@@ -281,12 +236,22 @@ impl KeyState {
                 self.update(out);
                 return true;
             }
+            // Dấu cách/dấu câu: kết thúc từ nhưng vẫn nhớ (gõ thẳng) để xoá lùi quay lại.
             if !has_word {
+                if self.prev_active {
+                    self.engine.separator();
+                } else {
+                    self.drop_word();
+                }
                 return false;
             }
-            // Dấu cách/dấu câu: gửi qua cùng một kênh với chữ để giữ đúng thứ tự.
             if self.word_direct {
-                self.drop_word();
+                self.prev_active = true;
+                self.prev_start = self.word_start_before.take();
+                self.engine.separator();
+                self.committed.clear();
+                self.snapshots.clear();
+                // Gửi qua cùng kênh với chữ để giữ đúng thứ tự.
                 out.push(Out::Commit(ch.to_string()));
             } else {
                 let mut s = self.take_word();
@@ -298,26 +263,41 @@ impl KeyState {
         }
 
         // Enter, Tab, Escape, mũi tên, phím số bên phải, ký tự ngoài ASCII...
-        has_word && self.finish_then_key(ctx, keyval, keycode, mods, out)
+        self.finish_then_key(keyval, keycode, mods, out)
     }
 
-    fn finish_then_key(&mut self, ctx: &Ctx, keyval: u32, keycode: u32, mods: u32, out: &mut Vec<Out>) -> bool {
-        if self.word_direct {
+    /// Backspace khi không có từ đang gõ: ứng dụng tự xoá; nếu xoá hết các ký tự
+    /// ngăn cách sau từ trước thì quay lại từ đó (gõ thêm dấu được).
+    fn backspace_outside_word(&mut self, surrounding: bool) {
+        if !self.prev_active || !surrounding {
+            self.drop_word();
+            return;
+        }
+        self.engine.backspace();
+        if self.has_word() {
+            let text = self.engine.text();
+            self.word_direct = true;
+            self.word_start_before = self.prev_start.take();
+            // Ứng dụng có thể báo chậm trạng thái còn dấu cách: vẫn coi là đúng chỗ.
+            self.snapshots = vec![text.clone(), format!("{text} ")];
+            self.committed = text;
+            self.prev_active = false;
+        }
+    }
+
+    fn finish_then_key(&mut self, keyval: u32, keycode: u32, mods: u32, out: &mut Vec<Out>) -> bool {
+        if !self.has_word() || self.word_direct {
             // Chữ đã nằm sẵn trong ứng dụng: phím đi thẳng, không cần làm gì.
             self.drop_word();
             return false;
         }
         out.push(Out::Commit(self.take_word()));
         out.push(Out::Preedit(String::new()));
-        match ctx.enter {
-            EnterMode::Passthrough => false,
-            EnterMode::Forward => {
-                out.push(Out::Forward { keyval, keycode, state: mods });
-                out.push(Out::Forward { keyval, keycode, state: mods | RELEASE_MASK });
-                self.swallow_release = Some(keycode);
-                true
-            }
-        }
+        // Chế độ gạch chân: tự gửi lại phím sau khi chốt chữ để giữ đúng thứ tự.
+        out.push(Out::Forward { keyval, keycode, state: mods });
+        out.push(Out::Forward { keyval, keycode, state: mods | RELEASE_MASK });
+        self.swallow_release = Some(keycode);
+        true
     }
 }
 
@@ -327,10 +307,10 @@ mod tests {
 
     const ENTER: u32 = 0xff0d;
     const ENTER_CODE: u32 = 28;
+    const BS: u32 = KEY_BACKSPACE;
 
     struct T {
         s: KeyState,
-        cfg: Config,
         on: bool,
         surrounding: bool,
         /// Mô phỏng ô nhập liệu: nội dung trước con trỏ.
@@ -338,19 +318,17 @@ mod tests {
     }
 
     impl T {
-        fn new(underline: bool, surrounding: bool) -> Self {
-            let cfg = Config { underline, ..Config::default() };
-            let mut s = KeyState::new(&cfg);
+        fn new(surrounding: bool) -> Self {
+            let mut s = KeyState::new();
             if surrounding {
                 s.on_surrounding(String::new());
             }
-            T { s, cfg, on: true, surrounding, app: String::new() }
+            T { s, on: true, surrounding, app: String::new() }
         }
 
         fn key(&mut self, keyval: u32, keycode: u32, state: u32) -> (bool, Vec<Out>) {
-            let ctx = Ctx { cfg: &self.cfg, surrounding: self.surrounding, enter: EnterMode::Forward };
             let mut out = Vec::new();
-            let handled = self.s.key(&ctx, &mut self.on, keyval, keycode, state, &mut out);
+            let handled = self.s.key(self.surrounding, &mut self.on, keyval, keycode, state, &mut out);
             for o in &out {
                 match o {
                     Out::Delete(n) => {
@@ -362,14 +340,27 @@ mod tests {
                     _ => {}
                 }
             }
-            if !handled && state & RELEASE_MASK == 0 && (0x20..0x7f).contains(&keyval) && state & COMBO_MASK == 0 {
-                self.app.push(char::from_u32(keyval).unwrap());
+            if !handled && state & RELEASE_MASK == 0 && state & COMBO_MASK == 0 {
+                if (0x20..0x7f).contains(&keyval) {
+                    self.app.push(char::from_u32(keyval).unwrap());
+                } else if keyval == BS {
+                    self.app.pop();
+                }
+            }
+            if self.surrounding && state & RELEASE_MASK == 0 {
+                // Ứng dụng báo lại chữ trước con trỏ sau mỗi thay đổi.
+                self.s.on_surrounding(self.app.clone());
             }
             (handled, out)
         }
 
         fn type_str(&mut self, text: &str) {
             for c in text.chars() {
+                if c == '<' {
+                    self.key(BS, 14, 0);
+                    self.key(BS, 14, RELEASE_MASK);
+                    continue;
+                }
                 let st = if c.is_ascii_uppercase() { SHIFT_MASK } else { 0 };
                 self.key(c as u32, 30, st);
                 self.key(c as u32, 30, st | RELEASE_MASK);
@@ -379,7 +370,7 @@ mod tests {
 
     #[test]
     fn direct_mode_types_into_app_without_preedit() {
-        let mut t = T::new(false, true);
+        let mut t = T::new(true);
         t.type_str("xin chaof");
         assert_eq!(t.app, "xin chào");
         let (handled, out) = t.key(ENTER, ENTER_CODE, 0);
@@ -391,7 +382,7 @@ mod tests {
 
     #[test]
     fn direct_mode_never_uses_preedit() {
-        let mut t = T::new(false, true);
+        let mut t = T::new(true);
         for c in "dduwowngf".chars() {
             let (_, out) = t.key(c as u32, 30, 0);
             assert!(out.iter().all(|o| !matches!(o, Out::Preedit(_))), "{out:?}");
@@ -401,7 +392,7 @@ mod tests {
 
     #[test]
     fn direct_mode_tone_rewrites_only_changed_tail() {
-        let mut t = T::new(false, true);
+        let mut t = T::new(true);
         t.type_str("vie");
         let (_, out) = t.key('e' as u32, 30, 0);
         assert_eq!(out, vec![Out::Delete(1), Out::Commit("ê".into())]);
@@ -411,19 +402,37 @@ mod tests {
 
     #[test]
     fn direct_mode_backspace_and_restore() {
-        let mut t = T::new(false, true);
+        let mut t = T::new(true);
         t.type_str("vieejt");
-        t.key(KEY_BACKSPACE, 14, 0);
+        t.key(BS, 14, 0);
         assert_eq!(t.app, "việ");
         t.type_str("c ");
         assert_eq!(t.app, "việc ");
-        t.type_str("classs pussh ");
-        assert_eq!(t.app, "việc class push ");
+        t.type_str("classs pussh uuw ");
+        assert_eq!(t.app, "việc class push ưu ");
+    }
+
+    #[test]
+    fn backspace_over_space_resumes_previous_word() {
+        let mut t = T::new(true);
+        t.type_str("nua <wx");
+        assert_eq!(t.app, "nữa");
+        t.type_str(" vuong  ab<<<<f");
+        assert_eq!(t.app, "nữa vuòng");
+        t.type_str("w nhes");
+        assert_eq!(t.app, "nữa vường nhé");
+
+        // Bấm Enter/mũi tên (có thể đã đổi chỗ) thì không quay lại nữa.
+        let mut t = T::new(true);
+        t.type_str("nua ");
+        t.key(ENTER, ENTER_CODE, 0);
+        t.type_str("<s");
+        assert_eq!(t.app, "nuas");
     }
 
     #[test]
     fn cursor_moved_starts_new_word() {
-        let mut t = T::new(false, true);
+        let mut t = T::new(true);
         t.type_str("vie");
         // Ứng dụng báo trạng thái cũ (chậm): không được coi là đổi chỗ.
         t.s.on_surrounding("vi".into());
@@ -435,7 +444,7 @@ mod tests {
 
     #[test]
     fn falls_back_to_preedit_without_surrounding() {
-        let mut t = T::new(false, false);
+        let mut t = T::new(false);
         let (_, out) = t.key('a' as u32, 30, 0);
         assert_eq!(out, vec![Out::Preedit("a".into())]);
         let (handled, out) = t.key(ENTER, ENTER_CODE, 0);
@@ -447,45 +456,29 @@ mod tests {
     }
 
     #[test]
-    fn underline_option_forces_preedit() {
-        let mut t = T::new(true, true);
-        let (_, out) = t.key('a' as u32, 30, 0);
-        assert_eq!(out, vec![Out::Preedit("a".into())]);
-    }
-
-    #[test]
-    fn toggle_keys() {
-        // Ctrl+Space
-        let mut t = T::new(false, true);
-        assert!(t.key(KEY_SPACE, 57, CONTROL_MASK).0);
-        assert!(!t.on);
-        assert!(t.key(KEY_SPACE, 57, CONTROL_MASK | RELEASE_MASK).0);
-        assert!(!t.key('a' as u32, 30, 0).0, "tắt thì không xử lý");
-
-        // Alt+Z
-        let mut t = T::new(false, true);
-        t.cfg.toggle_key = ToggleKey::AltZ;
-        assert!(t.key('z' as u32, 44, MOD1_MASK).0);
-        assert!(!t.on);
-
-        // Ctrl+Shift: nhấn Ctrl, nhấn Shift, nhả -> chuyển.
-        let mut t = T::new(false, true);
-        t.cfg.toggle_key = ToggleKey::CtrlShift;
+    fn ctrl_shift_toggles() {
+        let mut t = T::new(true);
         assert!(!t.key(KEY_CONTROL_L, 29, 0).0);
         assert!(!t.key(KEY_SHIFT_L, 42, CONTROL_MASK).0);
         t.key(KEY_SHIFT_L, 42, CONTROL_MASK | SHIFT_MASK | RELEASE_MASK);
         assert!(!t.on);
+        assert!(!t.key('a' as u32, 30, 0).0, "tắt thì không xử lý");
         // Ctrl+Shift+T (phím tắt) thì không chuyển.
         t.key(KEY_CONTROL_L, 29, 0);
         t.key(KEY_SHIFT_L, 42, CONTROL_MASK);
         t.key('T' as u32, 20, CONTROL_MASK | SHIFT_MASK);
         t.key(KEY_SHIFT_L, 42, CONTROL_MASK | SHIFT_MASK | RELEASE_MASK);
         assert!(!t.on);
+        // Shift rồi Ctrl cũng được.
+        t.key(KEY_SHIFT_L, 42, 0);
+        t.key(KEY_CONTROL_L, 29, SHIFT_MASK);
+        t.key(KEY_CONTROL_L, 29, CONTROL_MASK | SHIFT_MASK | RELEASE_MASK);
+        assert!(t.on);
     }
 
     #[test]
     fn ctrl_shortcut_in_direct_mode_passes_through() {
-        let mut t = T::new(false, true);
+        let mut t = T::new(true);
         t.type_str("dduwowngf");
         let (handled, out) = t.key('c' as u32, 46, CONTROL_MASK);
         assert!(!handled);

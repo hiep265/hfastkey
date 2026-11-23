@@ -1,8 +1,8 @@
 [package]
 name = "hfastkey-win"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "HFastKey cho Windows: bộ gõ tiếng Việt (Telex/VNI) viết bằng Rust"
+description = "HFastKey cho Windows: bộ gõ tiếng Việt Telex viết bằng Rust"
 license = "MIT"
 
 [[bin]]

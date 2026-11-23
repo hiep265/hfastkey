@@ -12,41 +12,24 @@ else
     command -v cargo >/dev/null || { echo "Cần cài Rust (cargo) để build từ mã nguồn." >&2; exit 1; }
     cd "$ROOT"
     cargo build --release -p hfastkey-daemon
-    if pkg-config --exists gtk4 2>/dev/null; then
-        cargo build --release -p hfastkey-settings
-    else
-        echo "Bỏ qua bảng điều khiển: chưa có libgtk-4-dev (sudo apt install libgtk-4-dev)."
-    fi
     SRC="$ROOT/target/release"
 fi
 
 BINDIR="$HOME/.local/bin"
 AUTOSTART="$HOME/.config/autostart"
-APPS="$HOME/.local/share/applications"
 LOG="$HOME/.cache/hfastkey.log"
-mkdir -p "$BINDIR" "$AUTOSTART" "$APPS" "$HOME/.cache"
+mkdir -p "$BINDIR" "$AUTOSTART" "$HOME/.cache"
 
 install -m755 "$SRC/hfastkey-daemon" "$BINDIR/hfastkey-daemon"
-if [ -x "$SRC/hfastkey-settings" ]; then
-    install -m755 "$SRC/hfastkey-settings" "$BINDIR/hfastkey-settings"
-    cat > "$APPS/hfastkey-settings.desktop" <<DESKTOP
-[Desktop Entry]
-Type=Application
-Name=HFastKey
-Comment=Bảng điều khiển bộ gõ tiếng Việt HFastKey
-Exec=$BINDIR/hfastkey-settings
-Icon=preferences-desktop-keyboard
-Terminal=false
-Categories=Settings;
-Keywords=vietnamese;telex;vni;unikey;tiếng việt;
-DESKTOP
-fi
+# Bản cũ có bảng điều khiển và tệp cài đặt, bản này không cần nữa.
+rm -f "$BINDIR/hfastkey-settings" "$HOME/.local/share/applications/hfastkey-settings.desktop"
+rm -rf "$HOME/.config/hfastkey"
 
 cat > "$AUTOSTART/hfastkey.desktop" <<DESKTOP
 [Desktop Entry]
 Type=Application
 Name=HFastKey
-Comment=Bộ gõ tiếng Việt viết bằng Rust
+Comment=Bộ gõ tiếng Việt Telex viết bằng Rust
 Exec=sh -c 'exec "$BINDIR/hfastkey-daemon" >> "$LOG" 2>&1'
 Terminal=false
 NoDisplay=true
@@ -66,7 +49,7 @@ sleep 1
 setsid "$BINDIR/hfastkey-daemon" >> "$LOG" 2>&1 < /dev/null &
 sleep 2
 if pgrep -x hfastkey-daemon >/dev/null; then
-    echo "HFastKey đang chạy. Biểu tượng V/E ở thanh trên cùng; log: $LOG"
+    echo "HFastKey đang chạy và sẽ tự chạy mỗi lần đăng nhập. Ctrl+Shift hoặc bấm biểu tượng V/E để bật/tắt; log: $LOG"
 else
     echo "HFastKey không khởi động được, xem $LOG. Chạy uninstall.sh để quay lại bộ gõ cũ." >&2
     exit 1

@@ -21,17 +21,17 @@ jobs:
       - name: Cài thư viện hệ thống
         run: |
           sudo apt-get update
-          sudo apt-get install -y libgtk-4-dev python3-gi gir1.2-ibus-1.0 dbus
+          sudo apt-get install -y python3-gi gir1.2-ibus-1.0 dbus
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test logic (lõi, Linux daemon, logic Windows)
         run: cargo test --release --workspace
       - name: Test với thư viện IBus thật
         run: scripts/test-ibus.sh
-      - name: Test đối chiếu (~183.000 ca từ Unikey, bamboo-core, danh sách âm tiết/từ)
+      - name: Test đối chiếu (~92.000 ca Telex từ Unikey, bamboo-core, danh sách âm tiết/từ)
         run: scripts/conformance.sh
       - name: Build
-        run: cargo build --release -p hfastkey-daemon -p hfastkey-settings
+        run: cargo build --release -p hfastkey-daemon
       - name: Đóng gói
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then export VERSION="${GITHUB_REF_NAME#v}"; fi

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Test đối chiếu HFastKey với dữ liệu bên ngoài (khoảng 183.000 ca):
+# Test đối chiếu HFastKey với dữ liệu bên ngoài (khoảng 92.000 ca Telex):
 #   - bảng test Telex của fcitx5-unikey (GPL, chỉ tải về khi chạy)
 #   - test của bamboo-core (MIT)
 #   - 7.184 âm tiết tiếng Việt (vietnameselanguage/syllable)

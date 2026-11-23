@@ -1,8 +1,8 @@
 [package]
 name = "hfastkey-daemon"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Bộ gõ tiếng Việt độc lập viết bằng Rust: tự đóng vai IBus, không cần fcitx5/ibus"
+description = "Bộ gõ tiếng Việt Telex cho Linux viết bằng Rust: tự đóng vai IBus, không cần fcitx5/ibus, không thư viện ngoài"
 license = "MIT"
 
 [[bin]]
@@ -11,6 +11,3 @@ path = "src/main.rs"
 
 [dependencies]
 hfastkey = { path = ".." }
-zbus = { version = "5", default-features = false, features = ["async-io", "blocking-api"] }
-futures-util = { version = "0.3", default-features = false, features = ["std"] }
-ksni = { version = "0.3.7", default-features = false, features = ["async-io", "blocking"] }
