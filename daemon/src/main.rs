@@ -125,6 +125,75 @@ fn session_address() -> String {
 }
 
 /// Gọi `ibus exit` nếu có ibus-daemon thật đang chạy.
+const IBUS_NAME: &str = "org.freedesktop.IBus";
+const GNOME_IBUS_SERVICE: &str = "org.freedesktop.IBus.session.GNOME.service";
+
+/// Dừng ibus-daemon mà GNOME tự bật (dịch vụ systemd của người dùng).
+fn stop_gnome_ibus_service() {
+    let active = Command::new("systemctl")
+        .args(["--user", "is-active", "--quiet", GNOME_IBUS_SERVICE])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+    if active {
+        eprintln!("hfastkey: dừng ibus của GNOME ({GNOME_IBUS_SERVICE})");
+        let _ = Command::new("systemctl").args(["--user", "stop", GNOME_IBUS_SERVICE]).status();
+    }
+}
+
+/// Giành tên org.freedesktop.IBus trên session bus.
+///
+/// Xếp hàng chờ tên (không dùng DoNotQueue): khi chương trình đang giữ tên
+/// thoát, D-Bus chuyển tên ngay cho HFastKey, không có khoảng trống nào để
+/// D-Bus tự bật lại ibus-daemon.
+async fn acquire_ibus_name(conn: &zbus::Connection) -> zbus::Result<bool> {
+    match conn
+        .request_name_with_flags(IBUS_NAME, RequestNameFlags::ReplaceExisting.into())
+        .await
+    {
+        Ok(RequestNameReply::PrimaryOwner) | Ok(RequestNameReply::AlreadyOwner) => return Ok(true),
+        Ok(RequestNameReply::InQueue) => {}
+        other => {
+            eprintln!("hfastkey: không xin được tên {IBUS_NAME}: {other:?}");
+            return Ok(false);
+        }
+    }
+    let me = conn.unique_name().map(|n| n.to_string()).unwrap_or_default();
+    let dbus = fdo::DBusProxy::new(conn).await?;
+    let name = zbus::names::BusName::try_from(IBUS_NAME)?;
+    for attempt in 0..40 {
+        let owner = dbus.get_name_owner(name.clone()).await.map(|o| o.to_string()).unwrap_or_default();
+        if owner == me {
+            eprintln!("hfastkey: đã giành được {IBUS_NAME}");
+            return Ok(true);
+        }
+        if attempt % 10 == 0 && !owner.is_empty() {
+            let pid = match zbus::names::BusName::try_from(owner.as_str()) {
+                Ok(b) => dbus.get_connection_unix_process_id(b).await.unwrap_or(0),
+                Err(_) => 0,
+            };
+            let comm = fs::read_to_string(format!("/proc/{pid}/comm")).unwrap_or_default();
+            match comm.trim() {
+                "ibus-daemon" => {
+                    eprintln!("hfastkey: ibus-daemon (pid {pid}) đang giữ {IBUS_NAME}, dừng nó...");
+                    stop_gnome_ibus_service();
+                    if attempt > 0 {
+                        let _ = Command::new("kill").arg(pid.to_string()).status();
+                    }
+                }
+                "fcitx5" => {
+                    eprintln!("hfastkey: fcitx5 đang chạy và giữ {IBUS_NAME}; hãy tắt fcitx5 trước (`pkill fcitx5`).");
+                    return Ok(false);
+                }
+                other => eprintln!("hfastkey: {IBUS_NAME} đang bị {other:?} (pid {pid}) giữ, chờ..."),
+            }
+        }
+        std::thread::sleep(Duration::from_millis(500));
+    }
+    eprintln!("hfastkey: hết thời gian chờ {IBUS_NAME}.");
+    Ok(false)
+}
+
 fn ask_ibus_to_exit() {
     match Command::new("ibus").arg("exit").output() {
         Ok(_) => {}
@@ -184,6 +253,7 @@ fn spawn_watcher(shared: Arc<Shared>, ours: Option<String>) {
                     if current != ours {
                         if file_owned_by_ibus_daemon(&current) {
                             eprintln!("hfastkey: ibus-daemon vừa ghi đè {}, yêu cầu nó thoát.", path.display());
+                            stop_gnome_ibus_service();
                             ask_ibus_to_exit();
                         }
                         stale = true;
@@ -247,28 +317,11 @@ async fn run(args: Args) -> zbus::Result<()> {
         .serve_at("/org/freedesktop/IBus", IBusRoot { shared: shared.clone() })?
         .build()
         .await?;
-    let flags = RequestNameFlags::ReplaceExisting | RequestNameFlags::DoNotQueue;
-    let mut attempt = 0;
-    loop {
-        match conn.request_name_with_flags("org.freedesktop.IBus", flags).await {
-            Ok(RequestNameReply::PrimaryOwner) | Ok(RequestNameReply::AlreadyOwner) => break,
-            other if attempt < 20 => {
-                if attempt == 0 {
-                    eprintln!("hfastkey: tên org.freedesktop.IBus đang bị giữ ({other:?}), yêu cầu ibus thoát...");
-                    ask_ibus_to_exit();
-                }
-                attempt += 1;
-                std::thread::sleep(Duration::from_millis(500));
-            }
-            other => {
-                eprintln!(
-                    "hfastkey: không chiếm được tên org.freedesktop.IBus ({other:?}).\n\
-                     Có thể fcitx5 đang chạy; hãy tắt nó trước (`pkill fcitx5`)."
-                );
-                std::process::exit(1);
-            }
-        }
+    if !acquire_ibus_name(&conn).await? {
+        std::process::exit(1);
     }
+    stop_gnome_ibus_service();
+    let flags = RequestNameFlags::ReplaceExisting | RequestNameFlags::DoNotQueue;
 
     let portal = zbus::connection::Builder::session()?
         .serve_at("/org/freedesktop/IBus", IBusPortal { shared: shared.clone() })?
@@ -286,7 +339,8 @@ async fn run(args: Args) -> zbus::Result<()> {
 
     if args.tray {
         use ksni::blocking::TrayMethods;
-        match (tray::VnTray { shared: shared.clone() }).spawn() {
+        // Chờ thanh trạng thái (tiện ích AppIndicator) sẵn sàng nếu nó bật sau HFastKey.
+        match (tray::VnTray { shared: shared.clone() }).assume_sni_available(true).spawn() {
             Ok(handle) => {
                 *shared.on_toggle.lock().unwrap() = Some(Box::new(move |_on| {
                     handle.update(|_| {});

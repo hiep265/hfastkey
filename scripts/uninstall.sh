@@ -10,6 +10,8 @@ fi
 if command -v fcitx5 >/dev/null; then
     setsid fcitx5 -rd >/dev/null 2>&1 < /dev/null &
     echo "Đã gỡ HFastKey, quay lại fcitx5."
+elif systemctl --user start org.freedesktop.IBus.session.GNOME.service 2>/dev/null; then
+    echo "Đã gỡ HFastKey, quay lại ibus."
 elif command -v ibus-daemon >/dev/null; then
     setsid ibus-daemon -drx >/dev/null 2>&1 < /dev/null &
     echo "Đã gỡ HFastKey, quay lại ibus."
